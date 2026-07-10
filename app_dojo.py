@@ -53,7 +53,7 @@ st.title("🎯 Family Dojo Points Tracker")
 st.write("Encouraging habits and tracking goals together!")
 st.divider()
 
-# ---- UNBREAKABLE DATA PARSER ----
+# ---- DATA CORE & CALLBACKS ----
 LOG_FILE = "dojo_points_log.csv"
 
 EMOJI_MAPPING = {
@@ -61,10 +61,36 @@ EMOJI_MAPPING = {
     "AJ": "👦 AJ"
 }
 
+def process_submission():
+    """Streamlit Callback: Executes silently behind the scenes instantly when Submit is clicked."""
+    kid_display = st.session_state.in_kid
+    action_type = st.session_state.in_action
+    behavior_key = st.session_state.in_behavior
+    raw_points = st.session_state.in_points
+    optional_notes = st.session_state.in_notes
+    
+    selected_kid = "Ari" if "Ari" in kid_display else "AJ"
+    is_deduction = "Deduct" in action_type
+    final_points = -abs(raw_points) if is_deduction else abs(raw_points)
+    action_label = "Deduction" if is_deduction else "Award"
+    
+    behavior_desc = BEHAVIORS[behavior_key]
+    
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    safe_notes = str(optional_notes).replace("|", " ").replace("\n", " ")
+    safe_category = str(behavior_desc).replace("|", " ")
+    
+    # Save strictly as clean text to the file
+    log_line = f"{timestamp}|{selected_kid}|{action_label}|{safe_category}|{final_points}|{safe_notes}\n"
+    
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(log_line)
+        
+    st.session_state.success_msg = f"Successfully logged {final_points} points for {selected_kid}!"
+
 def load_data_safely():
-    """An indestructible parser that cleans old bad data, emojis, and mixed commas/pipes on the fly."""
+    """Reads the data freshly every single time the page loads."""
     history = []
-    # Force absolute baseline totals
     totals = {"Ari": 0, "AJ": 0}
     
     if not os.path.exists(LOG_FILE):
@@ -80,13 +106,11 @@ def load_data_safely():
         if not clean_line:
             continue
         
-        # Auto-detect if it's an old comma log or a new pipe log
         delimiter = "|" if "|" in clean_line else ","
         parts = clean_line.split(delimiter)
         
         if len(parts) >= 5:
             raw_kid = parts[1]
-            # Absolute name extraction (ignoring old emojis or spaces)
             clean_kid = "Ari" if "Ari" in raw_kid else "AJ" if "AJ" in raw_kid else raw_kid.strip()
             
             try:
@@ -103,13 +127,12 @@ def load_data_safely():
                 "Notes": parts[5] if len(parts) > 5 else ""
             })
             
-            # Tally up points safely
             if clean_kid in totals:
                 totals[clean_kid] += pts
                 
     return history, totals
 
-# Read the file fresh every single time the page loads
+# Read the file to build the page matrix
 history_log, totals = load_data_safely()
 
 # ---- NAVIGATION TABS ----
@@ -157,35 +180,19 @@ with tab_dash:
 with tab_add:
     st.header("Adjust Dojo Points Balance")
     
+    if "success_msg" in st.session_state:
+        st.success(st.session_state.success_msg)
+        del st.session_state.success_msg
+    
     with st.form("points_form", clear_on_submit=True):
-        kid_display = st.radio("Select Child:", [EMOJI_MAPPING["Ari"], EMOJI_MAPPING["AJ"]], horizontal=True)
-        selected_kid = "Ari" if "Ari" in kid_display else "AJ"
+        st.radio("Select Child:", [EMOJI_MAPPING["Ari"], EMOJI_MAPPING["AJ"]], horizontal=True, key="in_kid")
+        st.radio("Action Type:", ["Award / Add Points 🟢", "Deduct / Remove Points 🔴"], horizontal=True, key="in_action")
+        st.selectbox("Select Associated Behavior", list(BEHAVIORS.keys()), key="in_behavior")
+        st.number_input("Point Count", min_value=1, max_value=20, value=1, step=1, key="in_points")
+        st.text_input("Notes / Context", key="in_notes")
         
-        action_type = st.radio("Action Type:", ["Award / Add Points 🟢", "Deduct / Remove Points 🔴"], horizontal=True)
-        behavior_key = st.selectbox("Select Associated Behavior", list(BEHAVIORS.keys()))
-        behavior_desc = BEHAVIORS[behavior_key]
-        raw_points = st.number_input("Point Count", min_value=1, max_value=20, value=1, step=1)
-        optional_notes = st.text_input("Notes / Context")
-        
-        submit_points = st.form_submit_button("Submit Points Adjustment")
-        
-        if submit_points:
-            is_deduction = "Deduct" in action_type
-            final_points = -abs(raw_points) if is_deduction else abs(raw_points)
-            action_label = "Deduction" if is_deduction else "Award"
-            
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            safe_notes = str(optional_notes).replace("|", " ").replace("\n", " ")
-            safe_category = str(behavior_desc).replace("|", " ")
-            
-            # Save strictly as clean text to the file
-            log_line = f"{timestamp}|{selected_kid}|{action_label}|{safe_category}|{final_points}|{safe_notes}\n"
-            
-            with open(LOG_FILE, "a", encoding="utf-8") as f:
-                f.write(log_line)
-                
-            # FORCE APP RELOAD so the screen updates instantly!
-            st.rerun()
+        # Action is completely handled by the callback hook now
+        st.form_submit_button("Submit Points Adjustment", on_click=process_submission)
 
 # ---- TAB 3: REWARD MILESTONES ----
 with tab_rewards:
@@ -214,7 +221,6 @@ with tab_rewards:
 with tab_history:
     st.header("Activity History")
     if history_log:
-        # Reapply emojis dynamically just for the pretty log table
         display_list = []
         for row in history_log:
             display_list.append({
