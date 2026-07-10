@@ -53,19 +53,35 @@ st.title("🎯 Family Dojo Points Tracker")
 st.write("Encouraging habits and tracking goals together!")
 st.divider()
 
-# ---- DATA STORAGE CORE ----
+# ---- DATA STORAGE CORE (SELF-HEALING) ----
 LOG_FILE = "dojo_points_log.csv"
+TARGET_COLUMNS = ["Timestamp", "Kid", "Action", "Category", "Points", "Notes"]
 
 def load_data():
     if os.path.isfile(LOG_FILE):
-        return pd.read_csv(LOG_FILE)
-    return pd.DataFrame(columns=["Timestamp", "Kid", "Action", "Category", "Points", "Notes"])
+        try:
+            # Read the CSV file safely
+            df = pd.read_csv(LOG_FILE)
+            
+            # Self-healing check: If old file structure is missing 'Action', patch it automatically
+            if "Action" not in df.columns:
+                df["Action"] = "Award"
+            
+            # Ensure columns line up perfectly with target expectations
+            df = df.reindex(columns=TARGET_COLUMNS)
+            return df
+        except Exception:
+            # If the file format gets completely corrupted, clear it out safely rather than crashing
+            return pd.DataFrame(columns=TARGET_COLUMNS)
+    return pd.DataFrame(columns=TARGET_COLUMNS)
 
 def get_totals(df):
     totals = {kid: 0 for kid in KIDS}
     if not df.empty:
         for kid in KIDS:
-            totals[kid] = df[df["Kid"] == kid]["Points"].sum()
+            # Convert points to numeric, ignoring errors, to keep addition smooth
+            df["Points"] = pd.to_numeric(df["Points"], errors='coerce').fillna(0)
+            totals[kid] = int(df[df["Kid"] == kid]["Points"].sum())
     return totals
 
 df_log = load_data()
@@ -86,7 +102,7 @@ with tab_dash:
     
     with col1:
         st.markdown('<div class="kid-card">', unsafe_allow_html=True)
-        st.subheader("👧 Ari")  # Updated to Girl Emoji
+        st.subheader("👧 Ari")
         st.metric(label="Total Balance", value=f"{totals['Ari']} pts")
         
         # Thermometer fill math
@@ -101,7 +117,7 @@ with tab_dash:
         
     with col2:
         st.markdown('<div class="kid-card">', unsafe_allow_html=True)
-        st.subheader("👦 AJ")   # Updated to Boy Emoji
+        st.subheader("👦 AJ")
         st.metric(label="Total Balance", value=f"{totals['AJ']} pts")
         
         # Thermometer fill math
@@ -148,10 +164,9 @@ with tab_add:
                 "Notes": optional_notes
             }])
             
-            if not os.path.isfile(LOG_FILE):
-                new_entry.to_csv(LOG_FILE, index=False)
-            else:
-                new_entry.to_csv(LOG_FILE, mode='a', header=False, index=False)
+            # Combine existing data with new entry to completely rebuild file cleanly
+            updated_df = pd.concat([df_log, new_entry], ignore_index=True)
+            updated_df.to_csv(LOG_FILE, index=False)
                 
             if is_deduction:
                 st.error(f"Logged: Removed {raw_points} points from {selected_kid}.")
