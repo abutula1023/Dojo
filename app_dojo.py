@@ -22,6 +22,7 @@ st.markdown("""
             border-radius: 8px !important;
             border: none !important;
             font-weight: bold !important;
+            height: 45px !important;
         }
         .kid-card {
             background-color: #f8fafc;
@@ -59,7 +60,6 @@ DB_FILE = "dojo_points.db"
 EMOJI_MAPPING = {"Ari": "👧 Ari", "AJ": "👦 AJ"}
 
 def init_db():
-    """Create the SQL database and table if it doesn't exist."""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS logs
@@ -67,11 +67,9 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Initialize database on app startup
 init_db()
 
 def load_data():
-    """Reads data transactionally using SQL."""
     conn = sqlite3.connect(DB_FILE)
     df = pd.read_sql_query("SELECT * FROM logs", conn)
     conn.close()
@@ -79,7 +77,6 @@ def load_data():
     history = df.to_dict('records')
     totals = {"Ari": 0, "AJ": 0}
     
-    # Calculate totals safely
     for row in history:
         raw_kid = str(row['Kid'])
         clean_kid = "Ari" if "Ari" in raw_kid else "AJ" if "AJ" in raw_kid else raw_kid.strip()
@@ -140,45 +137,47 @@ with tab_dash:
 with tab_add:
     st.header("Adjust Dojo Points Balance")
     
+    # Success message handler that survives the page reload
     if "success_msg" in st.session_state:
         st.success(st.session_state["success_msg"])
         del st.session_state["success_msg"]
     
-    with st.form("points_form", clear_on_submit=True):
-        kid_display = st.radio("Select Child:", [EMOJI_MAPPING["Ari"], EMOJI_MAPPING["AJ"]], horizontal=True)
-        action_type = st.radio("Action Type:", ["Award / Add Points 🟢", "Deduct / Remove Points 🔴"], horizontal=True)
-        behavior_key = st.selectbox("Select Associated Behavior", list(BEHAVIORS.keys()))
-        raw_points = st.number_input("Point Count", min_value=1, max_value=20, value=1, step=1)
-        optional_notes = st.text_input("Notes / Context")
+    # NO FORM USED HERE - Standard Streamlit Inputs completely bypass the form-crashing bug
+    kid_display = st.radio("Select Child:", [EMOJI_MAPPING["Ari"], EMOJI_MAPPING["AJ"]], horizontal=True)
+    action_type = st.radio("Action Type:", ["Award / Add Points 🟢", "Deduct / Remove Points 🔴"], horizontal=True)
+    behavior_key = st.selectbox("Select Associated Behavior", list(BEHAVIORS.keys()))
+    raw_points = st.number_input("Point Count", min_value=1, max_value=20, value=1, step=1)
+    optional_notes = st.text_input("Notes / Context")
+    
+    # A standard primary button instead of a form submission button
+    submit_points = st.button("Submit Points Adjustment", type="primary", use_container_width=True)
+    
+    if submit_points:
+        selected_kid = "Ari" if "Ari" in kid_display else "AJ"
+        is_deduction = "Deduct" in action_type
         
-        submit_points = st.form_submit_button("Submit Points Adjustment")
+        try:
+            final_points = -abs(int(raw_points)) if is_deduction else abs(int(raw_points))
+        except Exception:
+            final_points = 1
+            
+        action_label = "Deduction" if is_deduction else "Award"
+        behavior_desc = BEHAVIORS.get(behavior_key, f"Custom: {behavior_key}")
         
-        if submit_points:
-            selected_kid = "Ari" if "Ari" in kid_display else "AJ"
-            is_deduction = "Deduct" in action_type
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        safe_notes = str(optional_notes)
+        safe_category = str(behavior_desc)
+        
+        # SQL transaction (Bulletproof)
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("INSERT INTO logs VALUES (?, ?, ?, ?, ?, ?)", 
+                  (timestamp, selected_kid, action_label, safe_category, final_points, safe_notes))
+        conn.commit()
+        conn.close()
             
-            try:
-                final_points = -abs(int(raw_points)) if is_deduction else abs(int(raw_points))
-            except Exception:
-                final_points = 1
-                
-            action_label = "Deduction" if is_deduction else "Award"
-            behavior_desc = BEHAVIORS.get(behavior_key, f"Custom: {behavior_key}")
-            
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            safe_notes = str(optional_notes)
-            safe_category = str(behavior_desc)
-            
-            # Save transactionally to SQL database
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
-            c.execute("INSERT INTO logs VALUES (?, ?, ?, ?, ?, ?)", 
-                      (timestamp, selected_kid, action_label, safe_category, final_points, safe_notes))
-            conn.commit()
-            conn.close()
-                
-            st.session_state["success_msg"] = f"Successfully logged {abs(final_points)} points for {selected_kid}!"
-            st.rerun()
+        st.session_state["success_msg"] = f"Successfully logged {abs(final_points)} points for {selected_kid}!"
+        st.rerun()
 
 # ---- TAB 3: REWARD MILESTONES ----
 with tab_rewards:
