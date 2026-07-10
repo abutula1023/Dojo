@@ -56,28 +56,26 @@ st.divider()
 LOG_FILE = "dojo_points_log.csv"
 
 def parse_log_safely():
-    """Reads logs line-by-line via raw string splits to avoid Pandas version mismatch panics"""
+    """Reads logs line-by-line using pipe delimiters to completely avoid comma-breaking bugs"""
     raw_history = []
     totals = {kid: 0 for kid in KIDS}
     
     if not os.path.exists(LOG_FILE):
-        # Construct header from scratch if file doesn't exist
         with open(LOG_FILE, "w", encoding="utf-8") as f:
-            f.write("Timestamp,Kid,Action,Category,Points,Notes\n")
+            f.write("Timestamp|Kid|Action|Category|Points|Notes\n")
         return raw_history, totals
 
     with open(LOG_FILE, "r", encoding="utf-8") as f:
         lines = f.readlines()
         
-    for line in lines[1:]: # Skip the CSV header string row
+    for line in lines[1:]: # Skip the header row
         clean_line = line.strip()
         if not clean_line:
             continue
         
-        # Split tokens via standard comma delimiters
-        parts = clean_line.split(",", 5)
+        # Split tokens via the pipe delimiter (|) instead of commas
+        parts = clean_line.split("|")
         if len(parts) >= 5:
-            # Reconstruct missing notes parameter dynamically if omitted
             notes = parts[5] if len(parts) == 6 else ""
             timestamp, kid, action, category, pts_str = parts[0], parts[1], parts[2], parts[3], parts[4]
             
@@ -161,11 +159,12 @@ with tab_add:
             
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
-            # Sanitize notes text to prevent raw breaking return characters
-            safe_notes = str(optional_notes).replace(",", " ").replace("\n", " ")
+            # Clean out any conflicting pipeline split symbols from text entries
+            safe_notes = str(optional_notes).replace("|", " ").replace("\n", " ")
+            safe_category = str(behavior_desc).replace("|", " ")
             
-            # Direct text injection bypasses Pandas parsing models completely
-            log_line = f"{timestamp},{selected_kid},{action_label},{behavior_desc},{final_points},{safe_notes}\n"
+            # Writing out with a safe pipe (|) data boundary architecture
+            log_line = f"{timestamp}|{selected_kid}|{action_label}|{safe_category}|{final_points}|{safe_notes}\n"
             
             with open(LOG_FILE, "a", encoding="utf-8") as f:
                 f.write(log_line)
@@ -199,7 +198,6 @@ with tab_history:
     st.header("Activity History")
     if history_log:
         import pandas as pd
-        # Converted back to presentation-only table format so it reads smoothly
         display_df = pd.DataFrame(history_log)
         st.dataframe(display_df.iloc[::-1], use_container_width=True)
     else:
