@@ -55,8 +55,14 @@ st.divider()
 # ---- NATIVE SAFEDATA RECOVERY ENGINE ----
 LOG_FILE = "dojo_points_log.csv"
 
+# Mapping pure backend text data keys to front-end presentation strings
+EMOJI_MAPPING = {
+    "Ari": "👧 Ari",
+    "AJ": "👦 AJ"
+}
+
 def parse_log_safely():
-    """Reads logs line-by-line using pipe delimiters to completely avoid format panics"""
+    """Reads logs using standard string tokens to ensure unbreakable data calculations"""
     raw_history = []
     totals = {kid: 0 for kid in KIDS}
     
@@ -68,7 +74,7 @@ def parse_log_safely():
     with open(LOG_FILE, "r", encoding="utf-8") as f:
         lines = f.readlines()
         
-    for line in lines[1:]: # Skip header
+    for line in lines[1:]: 
         clean_line = line.strip()
         if not clean_line:
             continue
@@ -78,27 +84,35 @@ def parse_log_safely():
             notes = parts[5] if len(parts) == 6 else ""
             timestamp, kid, action, category, pts_str = parts[0], parts[1], parts[2], parts[3], parts[4]
             
+            # Clean emojis off name strings if they slipped into the log file historically
+            clean_kid = kid.replace("👧 ", "").replace("👦 ", "").strip()
+            
             try:
                 points_val = int(pts_str)
             except ValueError:
                 points_val = 0
                 
             raw_history.append({
-                "Timestamp": timestamp, "Kid": kid, "Action": action, 
+                "Timestamp": timestamp, "Kid": clean_kid, "Action": action, 
                 "Category": category, "Points": points_val, "Notes": notes
             })
             
-            if kid in totals:
-                totals[kid] += points_val
+            if clean_kid in totals:
+                totals[clean_kid] += points_val
                 
     return raw_history, totals
 
-# Initial data recovery pass
-if "initialized" not in st.session_state:
-    history_log, totals = parse_log_safely()
+# Compute current operational states
+history_log, totals = parse_log_safely()
+
+if "history_log" not in st.session_state:
     st.session_state["history_log"] = history_log
+if "totals" not in st.session_state:
     st.session_state["totals"] = totals
-    st.session_state["initialized"] = True
+
+# Sync up local state shorthand handles
+current_totals = st.session_state["totals"]
+current_history = st.session_state["history_log"]
 
 # ---- NAVIGATION TABS ----
 tab_dash, tab_add, tab_rewards, tab_history = st.tabs([
@@ -113,11 +127,9 @@ with tab_dash:
     col1, col2 = st.columns(2)
     THERMOMETER_GOAL = 100  
     
-    current_totals = st.session_state["totals"]
-    
     with col1:
         st.markdown('<div class="kid-card">', unsafe_allow_html=True)
-        st.subheader("👧 Ari")
+        st.subheader(EMOJI_MAPPING["Ari"])
         st.metric(label="Total Balance", value=f"{current_totals['Ari']} pts")
         
         ari_pct = min(max(float(current_totals['Ari']) / THERMOMETER_GOAL, 0.0), 1.0) * 100
@@ -131,7 +143,7 @@ with tab_dash:
         
     with col2:
         st.markdown('<div class="kid-card">', unsafe_allow_html=True)
-        st.subheader("👦 AJ")
+        st.subheader(EMOJI_MAPPING["AJ"])
         st.metric(label="Total Balance", value=f"{current_totals['AJ']} pts")
         
         aj_pct = min(max(float(current_totals['AJ']) / THERMOMETER_GOAL, 0.0), 1.0) * 100
@@ -148,7 +160,10 @@ with tab_add:
     st.header("Adjust Dojo Points Balance")
     
     with st.form("points_form", clear_on_submit=True):
-        selected_kid = st.radio("Select Child:", KIDS, horizontal=True)
+        # Dropdown uses display names, but parses to plain strings on backend selection
+        kid_display = st.radio("Select Child:", [EMOJI_MAPPING["Ari"], EMOJI_MAPPING["AJ"]], horizontal=True)
+        selected_kid = "Ari" if "Ari" in kid_display else "AJ"
+        
         action_type = st.radio("Action Type:", ["Award / Add Points 🟢", "Deduct / Remove Points 🔴"], horizontal=True)
         behavior_key = st.selectbox("Select Associated Behavior", list(BEHAVIORS.keys()))
         behavior_desc = BEHAVIORS[behavior_key]
@@ -166,13 +181,13 @@ with tab_add:
             safe_notes = str(optional_notes).replace("|", " ").replace("\n", " ")
             safe_category = str(behavior_desc).replace("|", " ")
             
+            # Save using clean, plain text identifier ("Ari" or "AJ")
             log_line = f"{timestamp}|{selected_kid}|{action_label}|{safe_category}|{final_points}|{safe_notes}\n"
             
-            # Append directly to local file storage
             with open(LOG_FILE, "a", encoding="utf-8") as f:
                 f.write(log_line)
                 
-            # State-Driven Updates: Change numbers directly inside live memory cache
+            # Update memory matrix safely
             st.session_state["totals"][selected_kid] += int(final_points)
             st.session_state["history_log"].append({
                 "Timestamp": timestamp, "Kid": selected_kid, "Action": action_label,
@@ -186,10 +201,12 @@ with tab_rewards:
     st.header("🎁 Prize Milestones")
     st.write("Track how close Ari and AJ are to unlocking their next reward targets!")
     
-    selected_view = st.selectbox("Check milestone progress for:", KIDS)
-    current_points = st.session_state["totals"][selected_view]
+    selected_view_display = st.selectbox("Check milestone progress for:", [EMOJI_MAPPING["Ari"], EMOJI_MAPPING["AJ"]])
+    selected_view = "Ari" if "Ari" in selected_view_display else "AJ"
     
-    st.write(f"**{selected_view} has: {current_points} points**")
+    current_points = current_totals[selected_view]
+    
+    st.write(f"**{selected_view_display} has: {current_points} points**")
     
     for mile in MILESTONES:
         target = mile["points"]
@@ -205,10 +222,20 @@ with tab_rewards:
 # ---- TAB 4: HISTORY LOG ----
 with tab_history:
     st.header("Activity History")
-    current_history = st.session_state["history_log"]
     if current_history:
         import pandas as pd
-        display_df = pd.DataFrame(current_history)
+        # Remap history strings back to emoji versions beautifully for presentation display
+        display_list = []
+        for row in current_history:
+            display_list.append({
+                "Timestamp": row["Timestamp"],
+                "Kid": EMOJI_MAPPING.get(row["Kid"], row["Kid"]),
+                "Action": row["Action"],
+                "Category": row["Category"],
+                "Points": row["Points"],
+                "Notes": row["Notes"]
+            })
+        display_df = pd.DataFrame(display_list)
         st.dataframe(display_df.iloc[::-1], use_container_width=True)
     else:
         st.info("No activity logged yet.")
