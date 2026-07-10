@@ -1,6 +1,5 @@
 # app_dojo.py
 import streamlit as st
-import pandas as pd
 import os
 from datetime import datetime
 from data_dojo import KIDS, BEHAVIORS, MILESTONES
@@ -53,41 +52,52 @@ st.title("🎯 Family Dojo Points Tracker")
 st.write("Encouraging habits and tracking goals together!")
 st.divider()
 
-# ---- DATA STORAGE CORE (CRASH-PROOF) ----
+# ---- NATIVE SAFEDATA RECOVERY ENGINE ----
 LOG_FILE = "dojo_points_log.csv"
-TARGET_COLUMNS = ["Timestamp", "Kid", "Action", "Category", "Points", "Notes"]
 
-def load_data():
-    if os.path.isfile(LOG_FILE):
-        try:
-            df = pd.read_csv(LOG_FILE)
-            # If columns are completely broken or misaligned, trigger the reset safety net
-            if not all(col in df.columns for col in ["Timestamp", "Kid", "Points"]):
-                return pd.DataFrame(columns=TARGET_COLUMNS)
-            
-            if "Action" not in df.columns:
-                df["Action"] = "Award"
-                
-            df = df.reindex(columns=TARGET_COLUMNS)
-            return df
-        except Exception:
-            # Clear file corruption silently to prevent "Oh No" page crash
-            return pd.DataFrame(columns=TARGET_COLUMNS)
-    return pd.DataFrame(columns=TARGET_COLUMNS)
-
-def get_totals(df):
+def parse_log_safely():
+    """Reads logs line-by-line via raw string splits to avoid Pandas version mismatch panics"""
+    raw_history = []
     totals = {kid: 0 for kid in KIDS}
-    if not df.empty:
-        for kid in KIDS:
-            try:
-                df["Points"] = pd.to_numeric(df["Points"], errors='coerce').fillna(0)
-                totals[kid] = int(df[df["Kid"] == kid]["Points"].sum())
-            except Exception:
-                totals[kid] = 0
-    return totals
+    
+    if not os.path.exists(LOG_FILE):
+        # Construct header from scratch if file doesn't exist
+        with open(LOG_FILE, "w", encoding="utf-8") as f:
+            f.write("Timestamp,Kid,Action,Category,Points,Notes\n")
+        return raw_history, totals
 
-df_log = load_data()
-totals = get_totals(df_log)
+    with open(LOG_FILE, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+        
+    for line in lines[1:]: # Skip the CSV header string row
+        clean_line = line.strip()
+        if not clean_line:
+            continue
+        
+        # Split tokens via standard comma delimiters
+        parts = clean_line.split(",", 5)
+        if len(parts) >= 5:
+            # Reconstruct missing notes parameter dynamically if omitted
+            notes = parts[5] if len(parts) == 6 else ""
+            timestamp, kid, action, category, pts_str = parts[0], parts[1], parts[2], parts[3], parts[4]
+            
+            try:
+                points_val = int(pts_str)
+            except ValueError:
+                points_val = 0
+                
+            raw_history.append({
+                "Timestamp": timestamp, "Kid": kid, "Action": action, 
+                "Category": category, "Points": points_val, "Notes": notes
+            })
+            
+            if kid in totals:
+                totals[kid] += points_val
+                
+    return raw_history, totals
+
+# Compute operational totals
+history_log, totals = parse_log_safely()
 
 # ---- NAVIGATION TABS ----
 tab_dash, tab_add, tab_rewards, tab_history = st.tabs([
@@ -150,26 +160,47 @@ with tab_add:
             action_label = "Deduction" if is_deduction else "Award"
             
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            new_entry = pd.DataFrame([{
-                "Timestamp": timestamp,
-                "Kid": selected_kid,
-                "Action": action_label,
-                "Category": behavior_desc,
-                "Points": int(final_points),
-                "Notes": str(optional_notes)
-            }])
             
-            try:
-                # Force clean data appending and write over file
-                fresh_df = load_data()
-                updated_df = pd.concat([fresh_df, new_entry], ignore_index=True)
-                updated_df.to_csv(LOG_FILE, index=False)
+            # Sanitize notes text to prevent raw breaking return characters
+            safe_notes = str(optional_notes).replace(",", " ").replace("\n", " ")
+            
+            # Direct text injection bypasses Pandas parsing models completely
+            log_line = f"{timestamp},{selected_kid},{action_label},{behavior_desc},{final_points},{safe_notes}\n"
+            
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(log_line)
                 
-                if is_deduction:
-                    st.error(f"Logged: Removed {raw_points} points from {selected_kid}.")
-                else:
-                    st.success(f"Logged: Added +{raw_points} points to {selected_kid}!")
-            except Exception as e:
-                # Absolute safety net fallback: try to write file from scratch
-                new_entry.to_csv(LOG_FILE, index=False)
-                st
+            st.success(f"Successfully logged adjustment for {selected_kid}!")
+            st.rerun()
+
+# ---- TAB 3: REWARD MILESTONES ----
+with tab_rewards:
+    st.header("🎁 Prize Milestones")
+    st.write("Track how close Ari and AJ are to unlocking their next reward targets!")
+    
+    selected_view = st.selectbox("Check milestone progress for:", KIDS)
+    current_points = totals[selected_view]
+    
+    st.write(f"**{selected_view} has: {current_points} points**")
+    
+    for mile in MILESTONES:
+        target = mile["points"]
+        reward_text = mile["reward"]
+        
+        progress_pct = min(max(float(current_points) / float(target), 0.0), 1.0)
+        status_emoji = "✅ UNLOCKED!" if current_points >= target else f"⏳ {target - current_points} pts away"
+        
+        with st.expander(f"🏅 {target} Points Target — {status_emoji}"):
+            st.progress(progress_pct)
+            st.write(f"**Prize Item:** {reward_text}")
+
+# ---- TAB 4: HISTORY LOG ----
+with tab_history:
+    st.header("Activity History")
+    if history_log:
+        import pandas as pd
+        # Converted back to presentation-only table format so it reads smoothly
+        display_df = pd.DataFrame(history_log)
+        st.dataframe(display_df.iloc[::-1], use_container_width=True)
+    else:
+        st.info("No activity logged yet.")
