@@ -15,7 +15,7 @@ BEHAVIORS = {
     "Empathy": "🌱 Showing empathy and kindness"
 }
 
-# Prize Milestones (rewards can be filled in later)
+# Prize Milestones
 MILESTONES = [
     {"points": 10, "reward": "TBD - Future Prize Option"},
     {"points": 20, "reward": "TBD - Future Prize Option"},
