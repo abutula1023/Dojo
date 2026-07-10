@@ -56,7 +56,7 @@ st.divider()
 LOG_FILE = "dojo_points_log.csv"
 
 def parse_log_safely():
-    """Reads logs line-by-line using pipe delimiters to completely avoid comma-breaking bugs"""
+    """Reads logs line-by-line using pipe delimiters to completely avoid format panics"""
     raw_history = []
     totals = {kid: 0 for kid in KIDS}
     
@@ -68,12 +68,11 @@ def parse_log_safely():
     with open(LOG_FILE, "r", encoding="utf-8") as f:
         lines = f.readlines()
         
-    for line in lines[1:]: # Skip the header row
+    for line in lines[1:]: # Skip header
         clean_line = line.strip()
         if not clean_line:
             continue
         
-        # Split tokens via the pipe delimiter (|) instead of commas
         parts = clean_line.split("|")
         if len(parts) >= 5:
             notes = parts[5] if len(parts) == 6 else ""
@@ -94,8 +93,12 @@ def parse_log_safely():
                 
     return raw_history, totals
 
-# Compute operational totals
-history_log, totals = parse_log_safely()
+# Initial data recovery pass
+if "initialized" not in st.session_state:
+    history_log, totals = parse_log_safely()
+    st.session_state["history_log"] = history_log
+    st.session_state["totals"] = totals
+    st.session_state["initialized"] = True
 
 # ---- NAVIGATION TABS ----
 tab_dash, tab_add, tab_rewards, tab_history = st.tabs([
@@ -110,12 +113,14 @@ with tab_dash:
     col1, col2 = st.columns(2)
     THERMOMETER_GOAL = 100  
     
+    current_totals = st.session_state["totals"]
+    
     with col1:
         st.markdown('<div class="kid-card">', unsafe_allow_html=True)
         st.subheader("👧 Ari")
-        st.metric(label="Total Balance", value=f"{totals['Ari']} pts")
+        st.metric(label="Total Balance", value=f"{current_totals['Ari']} pts")
         
-        ari_pct = min(max(float(totals['Ari']) / THERMOMETER_GOAL, 0.0), 1.0) * 100
+        ari_pct = min(max(float(current_totals['Ari']) / THERMOMETER_GOAL, 0.0), 1.0) * 100
         st.markdown(f"**Goal Progress: {int(ari_pct)}%**")
         st.markdown(f"""
             <div class="thermometer-container">
@@ -127,9 +132,9 @@ with tab_dash:
     with col2:
         st.markdown('<div class="kid-card">', unsafe_allow_html=True)
         st.subheader("👦 AJ")
-        st.metric(label="Total Balance", value=f"{totals['AJ']} pts")
+        st.metric(label="Total Balance", value=f"{current_totals['AJ']} pts")
         
-        aj_pct = min(max(float(totals['AJ']) / THERMOMETER_GOAL, 0.0), 1.0) * 100
+        aj_pct = min(max(float(current_totals['AJ']) / THERMOMETER_GOAL, 0.0), 1.0) * 100
         st.markdown(f"**Goal Progress: {int(aj_pct)}%**")
         st.markdown(f"""
             <div class="thermometer-container">
@@ -158,19 +163,23 @@ with tab_add:
             action_label = "Deduction" if is_deduction else "Award"
             
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            
-            # Clean out any conflicting pipeline split symbols from text entries
             safe_notes = str(optional_notes).replace("|", " ").replace("\n", " ")
             safe_category = str(behavior_desc).replace("|", " ")
             
-            # Writing out with a safe pipe (|) data boundary architecture
             log_line = f"{timestamp}|{selected_kid}|{action_label}|{safe_category}|{final_points}|{safe_notes}\n"
             
+            # Append directly to local file storage
             with open(LOG_FILE, "a", encoding="utf-8") as f:
                 f.write(log_line)
                 
-            st.success(f"Successfully logged adjustment for {selected_kid}!")
-            st.rerun()
+            # State-Driven Updates: Change numbers directly inside live memory cache
+            st.session_state["totals"][selected_kid] += int(final_points)
+            st.session_state["history_log"].append({
+                "Timestamp": timestamp, "Kid": selected_kid, "Action": action_label,
+                "Category": safe_category, "Points": int(final_points), "Notes": safe_notes
+            })
+            
+            st.success(f"Successfully logged entry for {selected_kid}! Click another tab to view.")
 
 # ---- TAB 3: REWARD MILESTONES ----
 with tab_rewards:
@@ -178,7 +187,7 @@ with tab_rewards:
     st.write("Track how close Ari and AJ are to unlocking their next reward targets!")
     
     selected_view = st.selectbox("Check milestone progress for:", KIDS)
-    current_points = totals[selected_view]
+    current_points = st.session_state["totals"][selected_view]
     
     st.write(f"**{selected_view} has: {current_points} points**")
     
@@ -196,9 +205,10 @@ with tab_rewards:
 # ---- TAB 4: HISTORY LOG ----
 with tab_history:
     st.header("Activity History")
-    if history_log:
+    current_history = st.session_state["history_log"]
+    if current_history:
         import pandas as pd
-        display_df = pd.DataFrame(history_log)
+        display_df = pd.DataFrame(current_history)
         st.dataframe(display_df.iloc[::-1], use_container_width=True)
     else:
         st.info("No activity logged yet.")
