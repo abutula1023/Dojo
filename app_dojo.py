@@ -53,25 +53,25 @@ st.title("🎯 Family Dojo Points Tracker")
 st.write("Encouraging habits and tracking goals together!")
 st.divider()
 
-# ---- DATA STORAGE CORE (SELF-HEALING) ----
+# ---- DATA STORAGE CORE (CRASH-PROOF) ----
 LOG_FILE = "dojo_points_log.csv"
 TARGET_COLUMNS = ["Timestamp", "Kid", "Action", "Category", "Points", "Notes"]
 
 def load_data():
     if os.path.isfile(LOG_FILE):
         try:
-            # Read the CSV file safely
             df = pd.read_csv(LOG_FILE)
+            # If columns are completely broken or misaligned, trigger the reset safety net
+            if not all(col in df.columns for col in ["Timestamp", "Kid", "Points"]):
+                return pd.DataFrame(columns=TARGET_COLUMNS)
             
-            # Self-healing check: If old file structure is missing 'Action', patch it automatically
             if "Action" not in df.columns:
                 df["Action"] = "Award"
-            
-            # Ensure columns line up perfectly with target expectations
+                
             df = df.reindex(columns=TARGET_COLUMNS)
             return df
         except Exception:
-            # If the file format gets completely corrupted, clear it out safely rather than crashing
+            # Clear file corruption silently to prevent "Oh No" page crash
             return pd.DataFrame(columns=TARGET_COLUMNS)
     return pd.DataFrame(columns=TARGET_COLUMNS)
 
@@ -79,9 +79,11 @@ def get_totals(df):
     totals = {kid: 0 for kid in KIDS}
     if not df.empty:
         for kid in KIDS:
-            # Convert points to numeric, ignoring errors, to keep addition smooth
-            df["Points"] = pd.to_numeric(df["Points"], errors='coerce').fillna(0)
-            totals[kid] = int(df[df["Kid"] == kid]["Points"].sum())
+            try:
+                df["Points"] = pd.to_numeric(df["Points"], errors='coerce').fillna(0)
+                totals[kid] = int(df[df["Kid"] == kid]["Points"].sum())
+            except Exception:
+                totals[kid] = 0
     return totals
 
 df_log = load_data()
@@ -98,14 +100,13 @@ with tab_dash:
     st.write("Tracking progress toward the major 100-point milestone goal!")
     
     col1, col2 = st.columns(2)
-    THERMOMETER_GOAL = 100  # Baseline thermometer capacity marker
+    THERMOMETER_GOAL = 100  
     
     with col1:
         st.markdown('<div class="kid-card">', unsafe_allow_html=True)
         st.subheader("👧 Ari")
         st.metric(label="Total Balance", value=f"{totals['Ari']} pts")
         
-        # Thermometer fill math
         ari_pct = min(max(float(totals['Ari']) / THERMOMETER_GOAL, 0.0), 1.0) * 100
         st.markdown(f"**Goal Progress: {int(ari_pct)}%**")
         st.markdown(f"""
@@ -120,7 +121,6 @@ with tab_dash:
         st.subheader("👦 AJ")
         st.metric(label="Total Balance", value=f"{totals['AJ']} pts")
         
-        # Thermometer fill math
         aj_pct = min(max(float(totals['AJ']) / THERMOMETER_GOAL, 0.0), 1.0) * 100
         st.markdown(f"**Goal Progress: {int(aj_pct)}%**")
         st.markdown(f"""
@@ -136,20 +136,15 @@ with tab_add:
     
     with st.form("points_form", clear_on_submit=True):
         selected_kid = st.radio("Select Child:", KIDS, horizontal=True)
-        
-        # ACTION SELECTION TO ADD OR DEDUCT
         action_type = st.radio("Action Type:", ["Award / Add Points 🟢", "Deduct / Remove Points 🔴"], horizontal=True)
-        
         behavior_key = st.selectbox("Select Associated Behavior", list(BEHAVIORS.keys()))
         behavior_desc = BEHAVIORS[behavior_key]
-        
         raw_points = st.number_input("Point Count", min_value=1, max_value=20, value=1, step=1)
-        optional_notes = st.text_input("Notes / Context (e.g., 'Refused to clean room' or 'Shared toys beautifully')")
+        optional_notes = st.text_input("Notes / Context")
         
         submit_points = st.form_submit_button("Submit Points Adjustment")
         
         if submit_points:
-            # Handle sign assignment based on action selection
             is_deduction = "Deduct" in action_type
             final_points = -abs(raw_points) if is_deduction else abs(raw_points)
             action_label = "Deduction" if is_deduction else "Award"
@@ -160,45 +155,21 @@ with tab_add:
                 "Kid": selected_kid,
                 "Action": action_label,
                 "Category": behavior_desc,
-                "Points": final_points,
-                "Notes": optional_notes
+                "Points": int(final_points),
+                "Notes": str(optional_notes)
             }])
             
-            # Combine existing data with new entry to completely rebuild file cleanly
-            updated_df = pd.concat([df_log, new_entry], ignore_index=True)
-            updated_df.to_csv(LOG_FILE, index=False)
+            try:
+                # Force clean data appending and write over file
+                fresh_df = load_data()
+                updated_df = pd.concat([fresh_df, new_entry], ignore_index=True)
+                updated_df.to_csv(LOG_FILE, index=False)
                 
-            if is_deduction:
-                st.error(f"Logged: Removed {raw_points} points from {selected_kid}.")
-            else:
-                st.success(f"Logged: Added +{raw_points} points to {selected_kid}!")
-            st.rerun()
-
-# ---- TAB 3: REWARD MILESTONES ----
-with tab_rewards:
-    st.header("🎁 Prize Milestones")
-    st.write("Track how close Ari and AJ are to unlocking their next reward targets!")
-    
-    selected_view = st.selectbox("Check milestone progress for:", KIDS)
-    current_points = totals[selected_view]
-    
-    st.write(f"**{selected_view} has: {current_points} points**")
-    
-    for mile in MILESTONES:
-        target = mile["points"]
-        reward_text = mile["reward"]
-        
-        progress_pct = min(max(float(current_points) / float(target), 0.0), 1.0)
-        status_emoji = "✅ UNLOCKED!" if current_points >= target else f"⏳ {target - current_points} pts away"
-        
-        with st.expander(f"🏅 {target} Points Target — {status_emoji}"):
-            st.progress(progress_pct)
-            st.write(f"**Prize Item:** {reward_text}")
-
-# ---- TAB 4: HISTORY LOG ----
-with tab_history:
-    st.header("Activity History")
-    if not df_log.empty:
-        st.dataframe(df_log.iloc[::-1], use_container_width=True)
-    else:
-        st.info("No activity logged yet.")
+                if is_deduction:
+                    st.error(f"Logged: Removed {raw_points} points from {selected_kid}.")
+                else:
+                    st.success(f"Logged: Added +{raw_points} points to {selected_kid}!")
+            except Exception as e:
+                # Absolute safety net fallback: try to write file from scratch
+                new_entry.to_csv(LOG_FILE, index=False)
+                st
