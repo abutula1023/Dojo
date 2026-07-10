@@ -86,7 +86,7 @@ with tab_dash:
     
     with col1:
         st.markdown('<div class="kid-card">', unsafe_allow_html=True)
-        st.subheader("👦 Ari")
+        st.subheader("👧 Ari")  # Updated to Girl Emoji
         st.metric(label="Total Balance", value=f"{totals['Ari']} pts")
         
         # Thermometer fill math
@@ -101,7 +101,7 @@ with tab_dash:
         
     with col2:
         st.markdown('<div class="kid-card">', unsafe_allow_html=True)
-        st.subheader("👧 AJ")
+        st.subheader("👦 AJ")   # Updated to Boy Emoji
         st.metric(label="Total Balance", value=f"{totals['AJ']} pts")
         
         # Thermometer fill math
