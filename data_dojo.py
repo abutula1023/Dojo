@@ -3,10 +3,11 @@
 # Kids configuration
 KIDS = ["Ari", "AJ"]
 
-# Behavioral point categories
+# Behavioral point categories (Now split cleanly)
 BEHAVIORS = {
+    "Ready": "⏰ Being ready on time and prepared",
+    "Responsible": "🎒 Showing responsibility and taking ownership",
     "Respectful": "🤝 Being respectful to others",
-    "Ready & Responsible": "⏰ Ready and responsible",
     "Cleaning": "🧹 Cleaning up and picking up toys",
     "Listening": "👂 Excellent listening ears",
     "Helping Others": "❤️ Helping family or friends",
