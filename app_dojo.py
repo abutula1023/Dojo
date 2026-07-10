@@ -2,6 +2,7 @@
 import streamlit as st
 import os
 from datetime import datetime
+import pandas as pd
 from data_dojo import KIDS, BEHAVIORS, MILESTONES
 
 # ---- CONFIGURATION ----
@@ -11,7 +12,7 @@ st.set_page_config(
     layout="centered"
 )
 
-# Custom Styling (Adding Thermometer Progress Aesthetics)
+# Custom Styling
 st.markdown("""
     <style>
         div.stButton > button:first-child {
@@ -52,24 +53,24 @@ st.title("🎯 Family Dojo Points Tracker")
 st.write("Encouraging habits and tracking goals together!")
 st.divider()
 
-# ---- NATIVE SAFEDATA RECOVERY ENGINE ----
+# ---- UNBREAKABLE DATA PARSER ----
 LOG_FILE = "dojo_points_log.csv"
 
-# Mapping pure backend text data keys to front-end presentation strings
 EMOJI_MAPPING = {
     "Ari": "👧 Ari",
     "AJ": "👦 AJ"
 }
 
-def parse_log_safely():
-    """Reads logs using standard string tokens to ensure unbreakable data calculations"""
-    raw_history = []
-    totals = {kid: 0 for kid in KIDS}
+def load_data_safely():
+    """An indestructible parser that cleans old bad data, emojis, and mixed commas/pipes on the fly."""
+    history = []
+    # Force absolute baseline totals
+    totals = {"Ari": 0, "AJ": 0}
     
     if not os.path.exists(LOG_FILE):
         with open(LOG_FILE, "w", encoding="utf-8") as f:
             f.write("Timestamp|Kid|Action|Category|Points|Notes\n")
-        return raw_history, totals
+        return history, totals
 
     with open(LOG_FILE, "r", encoding="utf-8") as f:
         lines = f.readlines()
@@ -79,40 +80,37 @@ def parse_log_safely():
         if not clean_line:
             continue
         
-        parts = clean_line.split("|")
+        # Auto-detect if it's an old comma log or a new pipe log
+        delimiter = "|" if "|" in clean_line else ","
+        parts = clean_line.split(delimiter)
+        
         if len(parts) >= 5:
-            notes = parts[5] if len(parts) == 6 else ""
-            timestamp, kid, action, category, pts_str = parts[0], parts[1], parts[2], parts[3], parts[4]
-            
-            # Clean emojis off name strings if they slipped into the log file historically
-            clean_kid = kid.replace("👧 ", "").replace("👦 ", "").strip()
+            raw_kid = parts[1]
+            # Absolute name extraction (ignoring old emojis or spaces)
+            clean_kid = "Ari" if "Ari" in raw_kid else "AJ" if "AJ" in raw_kid else raw_kid.strip()
             
             try:
-                points_val = int(pts_str)
+                pts = int(parts[4])
             except ValueError:
-                points_val = 0
+                pts = 0
                 
-            raw_history.append({
-                "Timestamp": timestamp, "Kid": clean_kid, "Action": action, 
-                "Category": category, "Points": points_val, "Notes": notes
+            history.append({
+                "Timestamp": parts[0], 
+                "Kid": clean_kid, 
+                "Action": parts[2], 
+                "Category": parts[3], 
+                "Points": pts, 
+                "Notes": parts[5] if len(parts) > 5 else ""
             })
             
+            # Tally up points safely
             if clean_kid in totals:
-                totals[clean_kid] += points_val
+                totals[clean_kid] += pts
                 
-    return raw_history, totals
+    return history, totals
 
-# Compute current operational states
-history_log, totals = parse_log_safely()
-
-if "history_log" not in st.session_state:
-    st.session_state["history_log"] = history_log
-if "totals" not in st.session_state:
-    st.session_state["totals"] = totals
-
-# Sync up local state shorthand handles
-current_totals = st.session_state["totals"]
-current_history = st.session_state["history_log"]
+# Read the file fresh every single time the page loads
+history_log, totals = load_data_safely()
 
 # ---- NAVIGATION TABS ----
 tab_dash, tab_add, tab_rewards, tab_history = st.tabs([
@@ -130,9 +128,9 @@ with tab_dash:
     with col1:
         st.markdown('<div class="kid-card">', unsafe_allow_html=True)
         st.subheader(EMOJI_MAPPING["Ari"])
-        st.metric(label="Total Balance", value=f"{current_totals['Ari']} pts")
+        st.metric(label="Total Balance", value=f"{totals['Ari']} pts")
         
-        ari_pct = min(max(float(current_totals['Ari']) / THERMOMETER_GOAL, 0.0), 1.0) * 100
+        ari_pct = min(max(float(totals['Ari']) / THERMOMETER_GOAL, 0.0), 1.0) * 100
         st.markdown(f"**Goal Progress: {int(ari_pct)}%**")
         st.markdown(f"""
             <div class="thermometer-container">
@@ -144,9 +142,9 @@ with tab_dash:
     with col2:
         st.markdown('<div class="kid-card">', unsafe_allow_html=True)
         st.subheader(EMOJI_MAPPING["AJ"])
-        st.metric(label="Total Balance", value=f"{current_totals['AJ']} pts")
+        st.metric(label="Total Balance", value=f"{totals['AJ']} pts")
         
-        aj_pct = min(max(float(current_totals['AJ']) / THERMOMETER_GOAL, 0.0), 1.0) * 100
+        aj_pct = min(max(float(totals['AJ']) / THERMOMETER_GOAL, 0.0), 1.0) * 100
         st.markdown(f"**Goal Progress: {int(aj_pct)}%**")
         st.markdown(f"""
             <div class="thermometer-container">
@@ -160,7 +158,6 @@ with tab_add:
     st.header("Adjust Dojo Points Balance")
     
     with st.form("points_form", clear_on_submit=True):
-        # Dropdown uses display names, but parses to plain strings on backend selection
         kid_display = st.radio("Select Child:", [EMOJI_MAPPING["Ari"], EMOJI_MAPPING["AJ"]], horizontal=True)
         selected_kid = "Ari" if "Ari" in kid_display else "AJ"
         
@@ -181,20 +178,14 @@ with tab_add:
             safe_notes = str(optional_notes).replace("|", " ").replace("\n", " ")
             safe_category = str(behavior_desc).replace("|", " ")
             
-            # Save using clean, plain text identifier ("Ari" or "AJ")
+            # Save strictly as clean text to the file
             log_line = f"{timestamp}|{selected_kid}|{action_label}|{safe_category}|{final_points}|{safe_notes}\n"
             
             with open(LOG_FILE, "a", encoding="utf-8") as f:
                 f.write(log_line)
                 
-            # Update memory matrix safely
-            st.session_state["totals"][selected_kid] += int(final_points)
-            st.session_state["history_log"].append({
-                "Timestamp": timestamp, "Kid": selected_kid, "Action": action_label,
-                "Category": safe_category, "Points": int(final_points), "Notes": safe_notes
-            })
-            
-            st.success(f"Successfully logged entry for {selected_kid}! Click another tab to view.")
+            # FORCE APP RELOAD so the screen updates instantly!
+            st.rerun()
 
 # ---- TAB 3: REWARD MILESTONES ----
 with tab_rewards:
@@ -204,7 +195,7 @@ with tab_rewards:
     selected_view_display = st.selectbox("Check milestone progress for:", [EMOJI_MAPPING["Ari"], EMOJI_MAPPING["AJ"]])
     selected_view = "Ari" if "Ari" in selected_view_display else "AJ"
     
-    current_points = current_totals[selected_view]
+    current_points = totals[selected_view]
     
     st.write(f"**{selected_view_display} has: {current_points} points**")
     
@@ -222,11 +213,10 @@ with tab_rewards:
 # ---- TAB 4: HISTORY LOG ----
 with tab_history:
     st.header("Activity History")
-    if current_history:
-        import pandas as pd
-        # Remap history strings back to emoji versions beautifully for presentation display
+    if history_log:
+        # Reapply emojis dynamically just for the pretty log table
         display_list = []
-        for row in current_history:
+        for row in history_log:
             display_list.append({
                 "Timestamp": row["Timestamp"],
                 "Kid": EMOJI_MAPPING.get(row["Kid"], row["Kid"]),
