@@ -1,9 +1,10 @@
 # app_dojo.py
 import streamlit as st
-import os
-import sqlite3
+import json
+import gspread
 from datetime import datetime
 import pandas as pd
+from google.oauth2.service_account import Credentials
 from data_dojo import KIDS, BEHAVIORS, MILESTONES
 
 # ---- CONFIGURATION ----
@@ -55,38 +56,39 @@ st.title("🎯 Family Dojo Points Tracker")
 st.write("Encouraging habits and tracking goals together!")
 st.divider()
 
-# ---- ROBUST SQL DATABASE CORE ----
-DB_FILE = "dojo_points.db"
+# ---- GOOGLE SHEETS CORE ----
+# 🚨 PASTE YOUR GOOGLE SHEET URL HERE 🚨
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1VVVJt5ze_tnqk7jGL0-JVQLNL2HVi0FX0h5Lqspo5WA/edit?gid=0#gid=0"
 EMOJI_MAPPING = {"Ari": "👧 Ari", "AJ": "👦 AJ"}
 
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS logs
-                 (Timestamp TEXT, Kid TEXT, Action TEXT, Category TEXT, Points INTEGER, Notes TEXT)''')
-    conn.commit()
-    conn.close()
+# Connect to Google securely via Streamlit Secrets
+creds_dict = json.loads(st.secrets["google_credentials"])
+scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+gc = gspread.authorize(creds)
 
-init_db()
-
+@st.cache_data(ttl=5)  # Caches data for 5 seconds so we don't overwhelm Google's servers
 def load_data():
-    conn = sqlite3.connect(DB_FILE)
-    df = pd.read_sql_query("SELECT * FROM logs", conn)
-    conn.close()
+    sheet = gc.open_by_url(SHEET_URL).sheet1
+    records = sheet.get_all_records()
+    df = pd.DataFrame(records)
     
-    history = df.to_dict('records')
+    history = []
     totals = {"Ari": 0, "AJ": 0}
     
-    for row in history:
-        raw_kid = str(row['Kid'])
-        clean_kid = "Ari" if "Ari" in raw_kid else "AJ" if "AJ" in raw_kid else raw_kid.strip()
-        try:
-            pts = int(row['Points'])
-        except (ValueError, TypeError):
-            pts = 0
-            
-        if clean_kid in totals:
-            totals[clean_kid] += pts
+    if not df.empty:
+        for index, row in df.iterrows():
+            raw_kid = str(row.get('Kid', ''))
+            clean_kid = "Ari" if "Ari" in raw_kid else "AJ" if "AJ" in raw_kid else raw_kid.strip()
+            try:
+                pts = int(row.get('Points', 0))
+            except (ValueError, TypeError):
+                pts = 0
+                
+            if clean_kid in totals:
+                totals[clean_kid] += pts
+                
+            history.append(row.to_dict())
             
     return history, totals
 
@@ -137,19 +139,16 @@ with tab_dash:
 with tab_add:
     st.header("Adjust Dojo Points Balance")
     
-    # Success message handler that survives the page reload
     if "success_msg" in st.session_state:
         st.success(st.session_state["success_msg"])
         del st.session_state["success_msg"]
     
-    # NO FORM USED HERE - Standard Streamlit Inputs completely bypass the form-crashing bug
     kid_display = st.radio("Select Child:", [EMOJI_MAPPING["Ari"], EMOJI_MAPPING["AJ"]], horizontal=True)
     action_type = st.radio("Action Type:", ["Award / Add Points 🟢", "Deduct / Remove Points 🔴"], horizontal=True)
     behavior_key = st.selectbox("Select Associated Behavior", list(BEHAVIORS.keys()))
     raw_points = st.number_input("Point Count", min_value=1, max_value=20, value=1, step=1)
     optional_notes = st.text_input("Notes / Context")
     
-    # A standard primary button instead of a form submission button
     submit_points = st.button("Submit Points Adjustment", type="primary", use_container_width=True)
     
     if submit_points:
@@ -168,15 +167,12 @@ with tab_add:
         safe_notes = str(optional_notes)
         safe_category = str(behavior_desc)
         
-        # SQL transaction (Bulletproof)
-        conn = sqlite3.connect(DB_FILE)
-        c = conn.cursor()
-        c.execute("INSERT INTO logs VALUES (?, ?, ?, ?, ?, ?)", 
-                  (timestamp, selected_kid, action_label, safe_category, final_points, safe_notes))
-        conn.commit()
-        conn.close()
+        # Write directly to Google Sheets
+        sheet = gc.open_by_url(SHEET_URL).sheet1
+        sheet.append_row([timestamp, selected_kid, action_label, safe_category, final_points, safe_notes])
             
         st.session_state["success_msg"] = f"Successfully logged {abs(final_points)} points for {selected_kid}!"
+        st.cache_data.clear()  # Wipes the local cache so the app instantly fetches the new row!
         st.rerun()
 
 # ---- TAB 3: REWARD MILESTONES ----
