@@ -4,14 +4,98 @@ on:
   push:
     branches:
       - main
+
   schedule:
-    - cron: "0 */6 * * *"
-  workflow_dispatch: {}
+    # Every 4 hours at minute 17, using UTC
+    - cron: "17 */4 * * *"
+
+  workflow_dispatch:
 
 jobs:
-  ping:
+  keep-awake:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
     steps:
-      - name: Ping App URL
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Playwright and Chromium
         run: |
-          curl -s -o /dev/null -w "Status Code: %{http_code}\n" https://ari-aj-dojo-points.streamlit.app/
+          python -m pip install --upgrade pip
+          pip install playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Open and wake Streamlit app
+        run: |
+          python - <<'PY'
+          import re
+          from playwright.sync_api import sync_playwright
+
+          APP_URL = "https://ari-aj-dojo-points.streamlit.app/"
+
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=True)
+
+              page = browser.new_page(
+                  viewport={"width": 1440, "height": 1000}
+              )
+
+              print(f"Opening {APP_URL}")
+
+              response = page.goto(
+                  APP_URL,
+                  wait_until="domcontentloaded",
+                  timeout=120000
+              )
+
+              if response:
+                  print(f"Initial HTTP status: {response.status}")
+              else:
+                  print("No initial HTTP response was returned.")
+
+              # Give the Streamlit landing page time to appear.
+              page.wait_for_timeout(10000)
+
+              # Wake the app when the sleeping page is displayed.
+              wake_button = page.get_by_text(
+                  re.compile(r"get this app back up", re.IGNORECASE)
+              )
+
+              if wake_button.count() > 0:
+                  print("Sleeping Streamlit app detected.")
+                  print("Clicking the wake-up button...")
+                  wake_button.first.click()
+              else:
+                  print("No sleeping-app button was found.")
+
+              # Allow Streamlit to start and establish the browser session.
+              page.wait_for_timeout(45000)
+
+              page.screenshot(
+                  path="streamlit-status.png",
+                  full_page=True
+              )
+
+              body_text = page.locator("body").inner_text().lower()
+
+              if "this app has gone to sleep" in body_text:
+                  raise RuntimeError(
+                      "The Streamlit app was still asleep after the wake attempt."
+                  )
+
+              print(f"Final page title: {page.title()}")
+              print(f"Final URL: {page.url}")
+              print("Streamlit visit completed successfully.")
+
+              browser.close()
+          PY
+
+      - name: Upload status screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: streamlit-status
+          path: streamlit-status.png
